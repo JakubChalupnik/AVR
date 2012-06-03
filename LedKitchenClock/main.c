@@ -29,6 +29,7 @@
 //*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //* Kubik       3.6.2012  First release, HW functional (CPU + display)
 //* Kubik       3.6.2012  Added RTC and keyboard handling
+//* Kubik       3.6.2012  Added time/date display
 //*
 //*******************************************************************************
 
@@ -222,10 +223,52 @@ void LedShiftByte (byte Byte) {
 // Uses BCD encoding!
 //
 
-void LedDisplayTime (byte Left, byte Right) {
+void LedDisplay (byte Left, byte Right) {
 
     LedScreen [0] = seg_hex_table [Left >> 4];
     LedScreen [1] = seg_hex_table [Left & 0x0F];
+    LedScreen [2] = seg_hex_table [Right >> 4];
+    LedScreen [3] = seg_hex_table [Right & 0x0F];
+}
+
+//
+// Displays date, aligning the day and month along the dot to make it look better
+// (No leading zeros, no unnecessary spaces)
+// Uses BCD encoding!
+//
+
+void LedDisplayDate (byte Left, byte Right) {
+
+    if (Left < 10) {
+        LedScreen [0] = 0x00;
+    } else {
+        LedScreen [0] = seg_hex_table [Left >> 4];
+    }
+    LedScreen [1] = seg_hex_table [Left & 0x0F];
+
+    if (Right < 10) {
+        LedScreen [2] = seg_hex_table [Right & 0x0F];
+        LedScreen [3] = 0x00;
+    } else {
+        LedScreen [2] = seg_hex_table [Right >> 4];
+        LedScreen [3] = seg_hex_table [Right & 0x0F];
+    }
+}
+
+//
+// Displays time, removing the leading hour zero to make it look better
+// Uses BCD encoding!
+//
+
+void LedDisplayTime (byte Left, byte Right) {
+
+    if (Left < 10) {
+        LedScreen [0] = 0x00;
+    } else {
+        LedScreen [0] = seg_hex_table [Left >> 4];
+    }
+    LedScreen [1] = seg_hex_table [Left & 0x0F];
+
     LedScreen [2] = seg_hex_table [Right >> 4];
     LedScreen [3] = seg_hex_table [Right & 0x0F];
 }
@@ -488,6 +531,13 @@ void HwInit(void) {
 //*******************************************************************************
 
 int main(void) {
+    byte State;
+#define STATE_TIME 0
+#define STATE_TIMER 1
+#define STATE_DATE 2
+    byte PrevHour, PrevMin;
+    byte TimeChanged;
+    byte UpdateDisplay;
 
     //
     // Initialize all global variables
@@ -495,6 +545,10 @@ int main(void) {
 
     Brightness = Ciel8Value (1);       // Medium brightness
     memset (LedScreen, 0, sizeof (LedScreen));
+    State = STATE_TIME;
+    PrevHour = PrevMin = 0;
+    TimeChanged = 0;
+    UpdateDisplay = 1;
 
     //
     // Initialize all the hardware, that is pins, I2C, RTC, and enable interrupts
@@ -509,23 +563,64 @@ int main(void) {
 
     while(1) {
 
-        //
-        // Do the following every second:
-        // - if the minute or hour changed, roll the changed digits
-        // - otherwise, just blink the second colon
-        // - unless the second is right to display date or DOW
-        //
-
         if(RtcAlarmIsSet()) {
+            PrevHour = Hour;
+            PrevMin = Min;
             RtcUpdateTime();
             RtcClearFlags();
-            LedDisplayTime (Hour, Min);
-            if (Sec & 0x01) {
-                LedDisplayColon (1);
-            } else {
-                LedDisplayColon (0);
-            }
+            TimeChanged = 1;
         }
+
+        switch (State) {
+
+          //
+          // Time mode, just display time and blink the colon
+          //
+
+          case STATE_TIME:
+
+            if (TimeChanged || UpdateDisplay) {
+                LedDisplayTime (Hour, Min);
+                if (Sec & 0x01) {
+                    LedDisplayColon (1);
+                } else {
+                    LedDisplayColon (0);
+                }
+
+                UpdateDisplay = 0;
+            }
+
+            if (key & KEY_1) {
+                State = STATE_DATE;
+                LedDisplayColon (0);
+                UpdateDisplay = 1;
+            }
+
+            break;
+
+          //
+          // Date mode, just display date and dot
+          //
+
+          case STATE_DATE:
+
+            if (TimeChanged || UpdateDisplay) {
+                LedDisplayDate (Day, Month);
+                LedDisplayDot (1);
+                UpdateDisplay = 0;
+            }
+
+            if (key & KEY_1) {
+                State = STATE_TIME;
+                LedDisplayDot (0);
+                UpdateDisplay = 1;
+            }
+
+            break;
+        }
+
+        key = 0x00;
+        TimeChanged = 0;
     }
 }
 

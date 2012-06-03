@@ -86,7 +86,7 @@
 #define Key1Pressed() ((KEY_K1_PIN & (1 << KEY_K1_BIT)) == 0)
 #define Key2Pressed() ((KEY_K2_PIN & (1 << KEY_K2_BIT)) == 0)
 
-#define DELAY_DEBOUNCE 500
+#define DELAY_DEBOUNCE 50
 #define DELAY_REPEAT_START 200
 #define DELAY_REPEAT 100
 
