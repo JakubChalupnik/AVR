@@ -30,6 +30,7 @@
 //* Kubik       3.6.2012  First release, HW functional (CPU + display)
 //* Kubik       3.6.2012  Added RTC and keyboard handling
 //* Kubik       3.6.2012  Added time/date display
+//* Kubik       3.6.2012  Added time/date setting
 //*
 //*******************************************************************************
 
@@ -83,7 +84,7 @@ byte Day, Month;
 byte Dow;
 byte AmPm;
 
-byte key = 0x00;
+volatile byte key = 0x00;
 
 //*******************************************************************************
 //*                              Function headers                               *
@@ -526,6 +527,66 @@ void HwInit(void) {
     RtcUpdateTime();
 }
 
+//
+// The following helper routine is used to change the value of numeric field.
+// The label <Label> is displayed, followed by colon, and then the current value of <Value>.
+// Every press of INC key increments the value, and the increment 'wraps around',
+// that is after reaching Max, the value goes back to Min.
+// Pressing SET key returns.
+//
+
+void Change (char Label, byte Min, byte Max, byte *Value) {
+    byte Changed;
+
+    Changed = 1;
+
+    while(1) {
+
+        //
+        // If something was changed, display current value
+        //
+
+        if(Changed) {
+            LedScreen [0] = Label;
+            LedScreen [1] = 0x00;
+            LedScreen [2] = seg_hex_table [(*Value >> 4)];
+            LedScreen [3] = seg_hex_table [(*Value & 0x0F)];
+            Changed = 0;
+        }
+
+        //
+        // If SET is pressed, return
+        //
+
+        if(key & KEY_1) {
+            key = 0;
+            return;
+        }
+
+        //
+        // If INC is pressed, increment the value.
+        // There are two catches - we need to count in BCD, so the increment is a bit tricky,
+        // and when the value goes over Max, wrap around, going back to Min.
+        //
+
+        if(key & KEY_2) {
+            PORTB ^= 0x04;
+            key = 0;
+            Changed = 1;
+
+            if((*Value & 0x0F) > 8) {
+                *Value += 7;
+            } else {
+                *Value += 1;
+            }
+
+            if(*Value > Max) {
+                *Value = Min;
+            }
+        }
+    }
+}
+
 //*******************************************************************************
 //*                                     MAIN                                    *
 //*******************************************************************************
@@ -535,7 +596,6 @@ int main(void) {
 #define STATE_TIME 0
 #define STATE_TIMER 1
 #define STATE_DATE 2
-    byte PrevHour, PrevMin;
     byte TimeChanged;
     byte UpdateDisplay;
 
@@ -546,9 +606,9 @@ int main(void) {
     Brightness = Ciel8Value (1);       // Medium brightness
     memset (LedScreen, 0, sizeof (LedScreen));
     State = STATE_TIME;
-    PrevHour = PrevMin = 0;
     TimeChanged = 0;
     UpdateDisplay = 1;
+    Dow = 0;
 
     //
     // Initialize all the hardware, that is pins, I2C, RTC, and enable interrupts
@@ -563,9 +623,19 @@ int main(void) {
 
     while(1) {
 
+        if((key & (KEY_1 | KEY_2)) == (KEY_1 | KEY_2)) {
+            key = 0;
+            Change(seg_mac(0, 1, 1, 1, 1, 0, 1, 0), 1, 0x31, &Day);
+            Change(seg_mac(1, 1, 1, 0, 1, 1, 0, 0), 1, 0x12, &Month);
+            Change(seg_mac(1, 1, 1, 0, 1, 1, 1, 0), 0, 1, &AmPm);
+            Change(seg_mac(0, 1, 1, 0, 1, 1, 1, 0), 0, 0x11, &Hour);
+            Change(seg_mac(0, 0, 1, 0, 1, 0, 1, 0), 0, 0x59, &Min);
+            Sec = 0x00;
+            RtcWriteTime();
+            UpdateDisplay = 1;
+        }
+
         if(RtcAlarmIsSet()) {
-            PrevHour = Hour;
-            PrevMin = Min;
             RtcUpdateTime();
             RtcClearFlags();
             TimeChanged = 1;
@@ -590,7 +660,8 @@ int main(void) {
                 UpdateDisplay = 0;
             }
 
-            if (key & KEY_1) {
+            if (key & KEY_2) {
+                key = 0x00;
                 State = STATE_DATE;
                 LedDisplayColon (0);
                 UpdateDisplay = 1;
@@ -611,6 +682,7 @@ int main(void) {
             }
 
             if (key & KEY_1) {
+                key = 0x00;
                 State = STATE_TIME;
                 LedDisplayDot (0);
                 UpdateDisplay = 1;
@@ -619,7 +691,6 @@ int main(void) {
             break;
         }
 
-        key = 0x00;
         TimeChanged = 0;
     }
 }
