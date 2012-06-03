@@ -60,6 +60,16 @@
 
 #define LedBitOutput(Bit)   LED_##Bit##_DDR |= (1 << LED_##Bit##_BIT)
 
+#define KEY_K1_BIT      4
+#define KEY_K1_PORT     PORTD
+#define KEY_K1_PIN      PIND
+#define KEY_K1_DDR      DDRD
+
+#define KEY_K2_BIT      1
+#define KEY_K2_PORT     PORTC
+#define KEY_K2_PIN      PINC
+#define KEY_K2_DDR      DDRC
+
 //-------------------------------------------------------------------------
 // Frequencies, Baud rates...
 #define F_CPU	16000000UL
@@ -70,5 +80,22 @@
 
 //-------------------------------------------------------------------------
 // Macros
+
+#define RtcAlarmIsSet() ((PINC & 0x04) == 0)
+
+#define Key1Pressed() ((KEY_K1_PIN & (1 << KEY_K1_BIT)) == 0)
+#define Key2Pressed() ((KEY_K2_PIN & (1 << KEY_K2_BIT)) == 0)
+
+#define DELAY_DEBOUNCE 500
+#define DELAY_REPEAT_START 200
+#define DELAY_REPEAT 100
+
+#define KEY_1	0x01
+#define KEY_2	0x02
+
+//-------------------------------------------------------------------------
+// Other HW dependant defines
+
+#define CONFIG_DS1337_ADDRESS (0x68 << 1)       // Device address of DS1337
 
 #endif // _HW_H
