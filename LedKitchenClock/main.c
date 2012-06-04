@@ -31,6 +31,7 @@
 //* Kubik       3.6.2012  Added RTC and keyboard handling
 //* Kubik       3.6.2012  Added time/date display
 //* Kubik       3.6.2012  Added time/date setting
+//* Kubik       4.6.2012  Added timer support
 //*
 //*******************************************************************************
 
@@ -81,10 +82,13 @@ byte Brightness;
 
 byte Hour, Min, Sec;
 byte Day, Month;
-byte Dow;
-byte AmPm;
 
 volatile byte key = 0x00;
+
+volatile byte Flags;
+#define FLAGS_TIME_CHANGED      0x01
+#define FLAGS_DISPLAY_UPDATE    0x02
+#define FLAGS_TIMER_STARTED     0x04
 
 //*******************************************************************************
 //*                              Function headers                               *
@@ -220,16 +224,17 @@ void LedShiftByte (byte Byte) {
 }
 
 //
-// Displays one two-digit decimal number on the left, the second on the right
-// Uses BCD encoding!
+// Displays one two-digit decimal number on the left, the second on the right, and colon in between
 //
 
-void LedDisplay (byte Left, byte Right) {
+void LedDisplayTimer (byte Left, byte Right) {
 
-    LedScreen [0] = seg_hex_table [Left >> 4];
-    LedScreen [1] = seg_hex_table [Left & 0x0F];
-    LedScreen [2] = seg_hex_table [Right >> 4];
-    LedScreen [3] = seg_hex_table [Right & 0x0F];
+    if (Left > 9) {
+        LedScreen [0] = seg_hex_table [Left / 10];
+    }
+    LedScreen [1] = seg_hex_table [Left % 10];
+    LedScreen [2] = seg_hex_table [Right / 10] | (1 << _P_SEG);
+    LedScreen [3] = seg_hex_table [Right % 10];
 }
 
 //
@@ -305,6 +310,10 @@ void LedDisplayColon (byte Enable) {
 //*                                  Key processing                             *
 //*******************************************************************************
 
+// 
+// Reads pins related to keyboard and converts that to something more convenient
+//
+
 byte KeyRead (void) {
     byte Keys = 0;
 
@@ -318,6 +327,10 @@ byte KeyRead (void) {
 
     return Keys;
 }
+
+//
+// Keyboard interrupt handler, called from the main interrupt handler with cca 500Hz frequency
+//
 
 void KeyIntHandler (void) {
     static uint8_t id = 0x00;
@@ -379,9 +392,8 @@ void RtcUpdateTime(void) {
     Sec = i2c_readAck();
     Min = i2c_readAck();
     Hour = i2c_readAck();
-    Hour &= 0x1F;                       // Mask out AM/PM and 12/24 bits
-    Dow = i2c_readAck();
-    Dow--;
+    Hour &= 0x3F;                       // Mask out 12/24 config bits
+    Day = i2c_readAck();                // Day of week - we can ignore it so let's abuse Day for it temporarily
     Day = i2c_readAck();
     Month = i2c_readNak();
     i2c_stop();                         // set stop condition = release bus
@@ -448,8 +460,8 @@ void RtcWriteTime(void) {
     i2c_write(0x00);                    // Write register address - 0 stands for 'seconds' register
     i2c_write(Sec);
     i2c_write(Min);
-    i2c_write(Hour | (1 << 6) | (AmPm << 5));   // Configure clock to 12Hr format and set AM/PM accordingly
-    i2c_write(Dow + 1);
+    i2c_write(Hour);                    // Configure clock to 24Hr format (bit 6 clear)
+    i2c_write(0);                       // Day of week - not used
     i2c_write(Day);
     i2c_write(Month);
     i2c_stop();                         // set stop condition = release bus
@@ -570,7 +582,6 @@ void Change (char Label, byte Min, byte Max, byte *Value) {
         //
 
         if(key & KEY_2) {
-            PORTB ^= 0x04;
             key = 0;
             Changed = 1;
 
@@ -592,12 +603,16 @@ void Change (char Label, byte Min, byte Max, byte *Value) {
 //*******************************************************************************
 
 int main(void) {
-    byte State;
-#define STATE_TIME 0
-#define STATE_TIMER 1
-#define STATE_DATE 2
-    byte TimeChanged;
-    byte UpdateDisplay;
+    byte State;                         // State machine control - see state definitions below
+    #define STATE_TIME 0
+    #define STATE_DATE 1
+    #define STATE_TIMER_INIT 2
+    #define STATE_TIMER_WAITING 3
+    #define STATE_TIMER_RUNNING 4
+    #define STATE_TIMER_ALARM 5
+
+    byte TimerMin, TimerSec;            // Timer - these are not BCD, but binary encoded!
+    byte TimerDelay;
 
     //
     // Initialize all global variables
@@ -606,9 +621,7 @@ int main(void) {
     Brightness = Ciel8Value (1);       // Medium brightness
     memset (LedScreen, 0, sizeof (LedScreen));
     State = STATE_TIME;
-    TimeChanged = 0;
-    UpdateDisplay = 1;
-    Dow = 0;
+    Flags = FLAGS_DISPLAY_UPDATE;
 
     //
     // Initialize all the hardware, that is pins, I2C, RTC, and enable interrupts
@@ -623,23 +636,36 @@ int main(void) {
 
     while(1) {
 
-        if((key & (KEY_1 | KEY_2)) == (KEY_1 | KEY_2)) {
+        //
+        // If we're in date mode and both keys are pressed at the same time, 
+        // entre config mode
+        //
+
+        if(((key & (KEY_1 | KEY_2)) == (KEY_1 | KEY_2)) && (State = STATE_DATE)) {
             key = 0;
             Change(seg_mac(0, 1, 1, 1, 1, 0, 1, 0), 1, 0x31, &Day);
             Change(seg_mac(1, 1, 1, 0, 1, 1, 0, 0), 1, 0x12, &Month);
-            Change(seg_mac(1, 1, 1, 0, 1, 1, 1, 0), 0, 1, &AmPm);
-            Change(seg_mac(0, 1, 1, 0, 1, 1, 1, 0), 0, 0x11, &Hour);
+            Change(seg_mac(0, 1, 1, 0, 1, 1, 1, 0), 0, 0x23, &Hour);
             Change(seg_mac(0, 0, 1, 0, 1, 0, 1, 0), 0, 0x59, &Min);
             Sec = 0x00;
             RtcWriteTime();
-            UpdateDisplay = 1;
+            Flags |= FLAGS_DISPLAY_UPDATE;
         }
+
+        //
+        // If RTC alarm is set (happens when second changes), 
+        // read the date/time and update flags
+        //
 
         if(RtcAlarmIsSet()) {
             RtcUpdateTime();
             RtcClearFlags();
-            TimeChanged = 1;
+            Flags |= FLAGS_TIME_CHANGED;
         }
+
+        //
+        // Based on the state machine, do one of following
+        //
 
         switch (State) {
 
@@ -648,8 +674,12 @@ int main(void) {
           //
 
           case STATE_TIME:
+            
+            //
+            // Display time if necessary, blink colon
+            //
 
-            if (TimeChanged || UpdateDisplay) {
+            if (Flags & (FLAGS_TIME_CHANGED | FLAGS_DISPLAY_UPDATE)) {
                 LedDisplayTime (Hour, Min);
                 if (Sec & 0x01) {
                     LedDisplayColon (1);
@@ -657,14 +687,27 @@ int main(void) {
                     LedDisplayColon (0);
                 }
 
-                UpdateDisplay = 0;
+                Flags &= ~FLAGS_DISPLAY_UPDATE;
             }
 
-            if (key & KEY_2) {
+            //
+            // If Key 1 is preset, change to date display
+            //
+
+            if (key & KEY_1) {
                 key = 0x00;
                 State = STATE_DATE;
                 LedDisplayColon (0);
-                UpdateDisplay = 1;
+                Flags |= FLAGS_DISPLAY_UPDATE;
+            }
+
+            //
+            // If Key 2 is pressed, start the timer
+            //
+
+            if (key & KEY_2) {
+                key = 0x00;
+                State = STATE_TIMER_INIT;
             }
 
             break;
@@ -675,24 +718,192 @@ int main(void) {
 
           case STATE_DATE:
 
-            if (TimeChanged || UpdateDisplay) {
+            //
+            // Display date if necessary, including the dot
+            //
+
+            if (Flags & (FLAGS_TIME_CHANGED | FLAGS_DISPLAY_UPDATE)) {
                 LedDisplayDate (Day, Month);
                 LedDisplayDot (1);
-                UpdateDisplay = 0;
+                Flags &= ~FLAGS_DISPLAY_UPDATE;
             }
+
+            //
+            // If Key 1 is pressed, switch back to time display
+            //
 
             if (key & KEY_1) {
                 key = 0x00;
                 State = STATE_TIME;
                 LedDisplayDot (0);
-                UpdateDisplay = 1;
+                Flags |= FLAGS_DISPLAY_UPDATE;
             }
+
+            //
+            // If Key 2 is pressed, start the timer
+            if (key & KEY_2) {
+                key = 0x00;
+                State = STATE_TIMER_INIT;
+            }
+
+            break;
+
+          //
+          // Timer mode init - set minute and second counter to 0, display it
+          // set timer start delay to 3 seconds and continue with STATE_TIMER_WAITING
+          // The timer will start 3 seconds after key is pressed
+          //
+
+          case STATE_TIMER_INIT:
+
+            TimerDelay = 3;         // Delayed timer start, cca 3 seconds
+            TimerMin = 1;
+            TimerSec = 0;
+            LedDisplayTimer (TimerMin, TimerSec);
+            State = STATE_TIMER_WAITING;
+
+            break;
+
+          //
+          // Timer mode waiting - wait for key.
+          // If it's - key, go back to time mode if minute counter is 1, else just decrement it
+          // If it's + key, increment minute counter
+          // If there's no keypress within 3 seconds, go to 'timer running' state
+          //
+
+          case STATE_TIMER_WAITING:
+
+            //
+            // Key 1 - decrease the minute timer and if it gets to 0, go to time mode
+            //
+
+            if (key & KEY_1) {
+                key = 0x00;
+
+                if (TimerMin <= 1) {
+                    State = STATE_TIME;
+                    Flags |= FLAGS_DISPLAY_UPDATE;
+                } else {
+                    TimerDelay = 3;
+                    TimerMin--;
+                    LedDisplayTimer (TimerMin, TimerSec);
+                }
+            }
+
+            //
+            // Key 2 - increase the minute timer
+            //
+
+            if (key & KEY_2) {
+                key = 0x00;
+                if (TimerMin < 99) {
+                    TimerDelay = 3;
+                    TimerMin++;
+                    LedDisplayTimer (TimerMin, TimerSec);
+                }
+            }
+
+            //
+            // Decrease the delayed start timer every second
+            // If it gets to 0, start timer
+            //
+
+            if (Flags & FLAGS_TIME_CHANGED) {
+                TimerDelay--;
+                if (TimerDelay == 0) {
+                    State = STATE_TIMER_RUNNING;
+                }
+            }
+
+            break;
+
+          //
+          // Timer mode running - decrement the counter and react to keys
+          //
+
+          case STATE_TIMER_RUNNING:
+
+            //
+            // When FLAGS_TIME_CHANGED is set, another second passed
+            // Decrease second and minute timer as necessary
+            // If both reaches 0, start the alarm
+            //
+
+            if (Flags & FLAGS_TIME_CHANGED) {
+                if (TimerSec > 0) {
+                    TimerSec--;
+                } else {
+                    if (TimerMin > 0) {
+                        TimerMin--;
+                        TimerSec = 59;
+                    } else {
+                        State = STATE_TIMER_ALARM;
+                    }
+                }
+            }
+
+            //
+            // If Key 1 is pressed, decrease the minute timer
+            // If it reaches 0, switch to time mode
+            //
+
+            if (key & KEY_1) {
+                key = 0x00;
+                if (TimerMin > 0) {
+                    TimerMin--;
+                } else {
+                    State = STATE_TIME;
+                    Flags |= FLAGS_DISPLAY_UPDATE;
+                }
+            }
+
+            //
+            // If Key 2 is pressed, increase the minute timer
+            //
+
+            if (key & KEY_2) {
+                key = 0x00;
+                if (TimerMin < 99) {
+                    TimerMin++;
+                }
+            }
+
+            LedDisplayTimer (TimerMin, TimerSec);
+
+            break;
+
+          //
+          // Alarm - TODO
+          //
+
+          case STATE_TIMER_ALARM:
+            LedScreen [0] = LedScreen [1] = LedScreen [2] = LedScreen [3] = 0xFF;
+
+            if (key) {
+                key = 0x00;
+                State = STATE_TIME;
+                Flags |= FLAGS_DISPLAY_UPDATE;
+            }
+
+            break;
+
+          //
+          // Default case - how did we get here?
+          // Anyway, just switch to time mode
+          //
+
+          default:
+            State = STATE_TIME;
+            LedDisplayDot (0);
+            Flags |= FLAGS_DISPLAY_UPDATE;
 
             break;
         }
 
-        TimeChanged = 0;
+        //
+        // Clear the Time Changed flag, it won't be valid in next main loop pass anyway
+        //
+
+        Flags &= ~FLAGS_TIME_CHANGED;
     }
 }
-
-
