@@ -32,6 +32,7 @@
 //* Kubik       3.6.2012  Added time/date display
 //* Kubik       3.6.2012  Added time/date setting
 //* Kubik       4.6.2012  Added timer support
+//* Kubik       7.6.2012  Added sound support
 //*
 //*******************************************************************************
 
@@ -63,6 +64,8 @@
 
 #define nop() {__asm__("nop");}         // nop is cca 50ns
 
+#define TIMER_DELAY     2               // How many seconds to wait before starting timer
+
 //*******************************************************************************
 //*                               HW dependant macros                           *
 //*******************************************************************************
@@ -88,7 +91,6 @@ volatile byte key = 0x00;
 volatile byte Flags;
 #define FLAGS_TIME_CHANGED      0x01
 #define FLAGS_DISPLAY_UPDATE    0x02
-#define FLAGS_TIMER_STARTED     0x04
 
 //*******************************************************************************
 //*                              Function headers                               *
@@ -96,6 +98,7 @@ volatile byte Flags;
 
 void LedShiftByte (byte Byte);
 void KeyIntHandler (void);
+void pwm_init(void);
 
 //*******************************************************************************
 //*                              Interrupt handler                              *
@@ -231,6 +234,8 @@ void LedDisplayTimer (byte Left, byte Right) {
 
     if (Left > 9) {
         LedScreen [0] = seg_hex_table [Left / 10];
+    } else {
+        LedScreen [0] = 0x00;
     }
     LedScreen [1] = seg_hex_table [Left % 10];
     LedScreen [2] = seg_hex_table [Right / 10] | (1 << _P_SEG);
@@ -628,6 +633,7 @@ int main(void) {
     //
 
     HwInit();
+    pwm_init();
     sei();
 
     //
@@ -637,7 +643,7 @@ int main(void) {
     while(1) {
 
         //
-        // If we're in date mode and both keys are pressed at the same time, 
+        // If we're in date mode and both keys are pressed at the same time,
         // entre config mode
         //
 
@@ -756,7 +762,7 @@ int main(void) {
 
           case STATE_TIMER_INIT:
 
-            TimerDelay = 3;         // Delayed timer start, cca 3 seconds
+            TimerDelay = TIMER_DELAY;   // Delayed timer start
             TimerMin = 1;
             TimerSec = 0;
             LedDisplayTimer (TimerMin, TimerSec);
@@ -784,7 +790,7 @@ int main(void) {
                     State = STATE_TIME;
                     Flags |= FLAGS_DISPLAY_UPDATE;
                 } else {
-                    TimerDelay = 3;
+                    TimerDelay = TIMER_DELAY;
                     TimerMin--;
                     LedDisplayTimer (TimerMin, TimerSec);
                 }
@@ -797,7 +803,7 @@ int main(void) {
             if (key & KEY_2) {
                 key = 0x00;
                 if (TimerMin < 99) {
-                    TimerDelay = 3;
+                    TimerDelay = TIMER_DELAY;
                     TimerMin++;
                     LedDisplayTimer (TimerMin, TimerSec);
                 }
@@ -878,11 +884,14 @@ int main(void) {
 
           case STATE_TIMER_ALARM:
             LedScreen [0] = LedScreen [1] = LedScreen [2] = LedScreen [3] = 0xFF;
+            TIMSK |= (1 << TOIE0);
+
 
             if (key) {
                 key = 0x00;
                 State = STATE_TIME;
                 Flags |= FLAGS_DISPLAY_UPDATE;
+                TIMSK &= ~(1 << TOIE0);
             }
 
             break;

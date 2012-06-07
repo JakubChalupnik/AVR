@@ -77,7 +77,6 @@
 //-------------------------------------------------------------------------
 // HW UART defines
 
-
 //-------------------------------------------------------------------------
 // Macros
 
@@ -86,6 +85,11 @@
 #define Key1Pressed() ((KEY_K1_PIN & (1 << KEY_K1_BIT)) == 0)
 #define Key2Pressed() ((KEY_K2_PIN & (1 << KEY_K2_BIT)) == 0)
 
+//-------------------------------------------------------------------------
+// Other HW dependant defines
+
+#define CONFIG_DS1337_ADDRESS (0x68 << 1)       // Device address of DS1337
+
 #define DELAY_DEBOUNCE 30
 #define DELAY_REPEAT_START 100
 #define DELAY_REPEAT 50
@@ -93,9 +97,6 @@
 #define KEY_1	0x01
 #define KEY_2	0x02
 
-//-------------------------------------------------------------------------
-// Other HW dependant defines
-
-#define CONFIG_DS1337_ADDRESS (0x68 << 1)       // Device address of DS1337
+#define SAMPLE_PAUSE 2000
 
 #endif // _HW_H
