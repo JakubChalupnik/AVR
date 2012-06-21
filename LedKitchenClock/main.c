@@ -33,6 +33,7 @@
 //* Kubik       3.6.2012  Added time/date setting
 //* Kubik       4.6.2012  Added timer support
 //* Kubik       7.6.2012  Added sound support
+//* Kubik      21.6.2012  Improved alarm a little
 //*
 //*******************************************************************************
 
@@ -135,9 +136,7 @@ SIGNAL(TIMER2_COMP_vect) {
         LedShiftByte (LedScreen [LedDigitActive]);
 
         //
-        // Enable corresponding digit.
-        // When the last digit is activated, start the ADC. 
-        // We do not want the display light impact the light intensity measurement.
+        // Enable corresponding digit
         //
 
         if (LedDigitActive == 0) {
@@ -160,9 +159,6 @@ SIGNAL(TIMER2_COMP_vect) {
 
         if (LedDigitActive == 3) {
             LedBitSet (D4);
-            if (!(ADCSRA & (1 << ADIF))) {  // If no result is available, restart the ADC
-                ADCSRA |= (1 << ADSC);
-            }
         } else {
             LedBitClear (D4);
         }
@@ -315,17 +311,6 @@ void LedDisplayColon (byte Enable) {
     }
 }
 
-//
-// Displays one two-digit decimal number on the left, the second on the right
-//
-
-void LedDisplayWord (word Value) {
-
-    LedScreen [0] = seg_hex_table [(Value >> 12) & 0x0F];
-    LedScreen [1] = seg_hex_table [(Value >>  8) & 0x0F];
-    LedScreen [2] = seg_hex_table [(Value >>  4) & 0x0F];
-    LedScreen [3] = seg_hex_table [(Value >>  0) & 0x0F];
-}
 
 //*******************************************************************************
 //*                                  Key processing                             *
@@ -558,17 +543,6 @@ void HwInit(void) {
     RtcInit();
     RtcClearFlags();
     RtcUpdateTime();
-
-    //
-    // Initialize ADC to AVcc, left adjusted, MUX0 input, 1/128 divider, manually started.
-    // Then enable it. One conversion takes cca 0.1us.
-    //
-
-    ADMUX = (1 << REFS0) | (1 << ADLAR);
-//     ADCSRA = (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
-    ADCSRA = (1 << ADPS2);// | (1 << ADPS1) | (1 << ADPS0);
-    ADCSRA |= (1 << ADEN);
-//    ADCSRA |= (1 << ADSC);
 }
 
 //
@@ -641,11 +615,12 @@ int main(void) {
     #define STATE_TIMER_INIT 2
     #define STATE_TIMER_WAITING 3
     #define STATE_TIMER_RUNNING 4
-    #define STATE_TIMER_ALARM 5
+    #define STATE_TIMER_ALARM_START 5
+    #define STATE_TIMER_ALARM 6
 
     byte TimerMin, TimerSec;            // Timer - these are not BCD, but binary encoded!
     byte TimerDelay;
-    word LightIntensityAverage;
+    byte AlarmCounter;                  // Used for display blinking during alarm
 
     //
     // Initialize all global variables
@@ -655,7 +630,6 @@ int main(void) {
     memset (LedScreen, 0, sizeof (LedScreen));
     State = STATE_TIME;
     Flags = FLAGS_DISPLAY_UPDATE;
-    LightIntensityAverage = 0;
 
     //
     // Initialize all the hardware, that is pins, I2C, RTC, and enable interrupts
@@ -670,17 +644,6 @@ int main(void) {
     //
 
     while(1) {
-
-        //
-        // If ADC result is ready, add it to the moving average to measure the average light intensity
-        //
-
-        if (ADCSRA & (1 << ADIF)) {
-            LightIntensityAverage -= LightIntensityAverage / 64;
-            LightIntensityAverage += ADCH;
-            ADCSRA |= (1 << ADIF);          // Manually clear the ADC interrupt flag
-            Brightness = Ciel8Value (4 - (LightIntensityAverage >> 12));
-        }
 
         //
         // If we're in date mode and both keys are pressed at the same time,
@@ -699,7 +662,7 @@ int main(void) {
         }
 
         //
-        // If RTC alarm is set (happens when second changes),
+        // If RTC alarm is set (happens when second changes), 
         // read the date/time and update flags
         //
 
@@ -769,9 +732,8 @@ int main(void) {
             //
 
             if (Flags & (FLAGS_TIME_CHANGED | FLAGS_DISPLAY_UPDATE)) {
-//                 LedDisplayDate (Day, Month);
-//                 LedDisplayDot (1);
-                LedDisplayWord (LightIntensityAverage);
+                LedDisplayDate (Day, Month);
+                LedDisplayDot (1);
                 Flags &= ~FLAGS_DISPLAY_UPDATE;
             }
 
@@ -884,7 +846,7 @@ int main(void) {
                         TimerMin--;
                         TimerSec = 59;
                     } else {
-                        State = STATE_TIMER_ALARM;
+                        State = STATE_TIMER_ALARM_START;
                     }
                 }
             }
@@ -920,13 +882,35 @@ int main(void) {
             break;
 
           //
-          // Alarm - TODO
+          // Alarm start - enable sound interrupt, initialize the alarm counter 
+          // and go to STATE_TIMER_ALARM
+          //
+
+          case STATE_TIMER_ALARM_START:
+            TIMSK |= (1 << TOIE0);
+            AlarmCounter = 0;
+            LedScreen [0] = LedScreen [1] = LedScreen [2] = LedScreen [3] = 0xFF;
+            State = STATE_TIMER_ALARM;
+
+            break;
+
+          //
+          // Alarm - blink the display until key is pressed
           //
 
           case STATE_TIMER_ALARM:
-            LedScreen [0] = LedScreen [1] = LedScreen [2] = LedScreen [3] = 0xFF;
-            TIMSK |= (1 << TOIE0);
 
+            if (AlarmCounter >= 15) {
+                AlarmCounter = 0;
+            } else {
+                AlarmCounter++;
+            }
+
+            if (AlarmCounter > 7) {
+                Brightness = Ciel8Value (15 - AlarmCounter);
+            } else {
+                Brightness = Ciel8Value (AlarmCounter);
+            }
 
             if (key) {
                 key = 0x00;
@@ -934,6 +918,8 @@ int main(void) {
                 Flags |= FLAGS_DISPLAY_UPDATE;
                 TIMSK &= ~(1 << TOIE0);
             }
+
+            _delay_ms (20);
 
             break;
 
