@@ -135,7 +135,9 @@ SIGNAL(TIMER2_COMP_vect) {
         LedShiftByte (LedScreen [LedDigitActive]);
 
         //
-        // Enable corresponding digit
+        // Enable corresponding digit.
+        // When the last digit is activated, start the ADC. 
+        // We do not want the display light impact the light intensity measurement.
         //
 
         if (LedDigitActive == 0) {
@@ -158,6 +160,9 @@ SIGNAL(TIMER2_COMP_vect) {
 
         if (LedDigitActive == 3) {
             LedBitSet (D4);
+            if (!(ADCSRA & (1 << ADIF))) {  // If no result is available, restart the ADC
+                ADCSRA |= (1 << ADSC);
+            }
         } else {
             LedBitClear (D4);
         }
@@ -310,6 +315,17 @@ void LedDisplayColon (byte Enable) {
     }
 }
 
+//
+// Displays one two-digit decimal number on the left, the second on the right
+//
+
+void LedDisplayWord (word Value) {
+
+    LedScreen [0] = seg_hex_table [(Value >> 12) & 0x0F];
+    LedScreen [1] = seg_hex_table [(Value >>  8) & 0x0F];
+    LedScreen [2] = seg_hex_table [(Value >>  4) & 0x0F];
+    LedScreen [3] = seg_hex_table [(Value >>  0) & 0x0F];
+}
 
 //*******************************************************************************
 //*                                  Key processing                             *
@@ -542,6 +558,17 @@ void HwInit(void) {
     RtcInit();
     RtcClearFlags();
     RtcUpdateTime();
+
+    //
+    // Initialize ADC to AVcc, left adjusted, MUX0 input, 1/128 divider, manually started.
+    // Then enable it. One conversion takes cca 0.1us.
+    //
+
+    ADMUX = (1 << REFS0) | (1 << ADLAR);
+//     ADCSRA = (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+    ADCSRA = (1 << ADPS2);// | (1 << ADPS1) | (1 << ADPS0);
+    ADCSRA |= (1 << ADEN);
+//    ADCSRA |= (1 << ADSC);
 }
 
 //
@@ -618,6 +645,7 @@ int main(void) {
 
     byte TimerMin, TimerSec;            // Timer - these are not BCD, but binary encoded!
     byte TimerDelay;
+    word LightIntensityAverage;
 
     //
     // Initialize all global variables
@@ -627,6 +655,7 @@ int main(void) {
     memset (LedScreen, 0, sizeof (LedScreen));
     State = STATE_TIME;
     Flags = FLAGS_DISPLAY_UPDATE;
+    LightIntensityAverage = 0;
 
     //
     // Initialize all the hardware, that is pins, I2C, RTC, and enable interrupts
@@ -641,6 +670,17 @@ int main(void) {
     //
 
     while(1) {
+
+        //
+        // If ADC result is ready, add it to the moving average to measure the average light intensity
+        //
+
+        if (ADCSRA & (1 << ADIF)) {
+            LightIntensityAverage -= LightIntensityAverage / 64;
+            LightIntensityAverage += ADCH;
+            ADCSRA |= (1 << ADIF);          // Manually clear the ADC interrupt flag
+            Brightness = Ciel8Value (4 - (LightIntensityAverage >> 12));
+        }
 
         //
         // If we're in date mode and both keys are pressed at the same time,
@@ -659,7 +699,7 @@ int main(void) {
         }
 
         //
-        // If RTC alarm is set (happens when second changes), 
+        // If RTC alarm is set (happens when second changes),
         // read the date/time and update flags
         //
 
@@ -729,8 +769,9 @@ int main(void) {
             //
 
             if (Flags & (FLAGS_TIME_CHANGED | FLAGS_DISPLAY_UPDATE)) {
-                LedDisplayDate (Day, Month);
-                LedDisplayDot (1);
+//                 LedDisplayDate (Day, Month);
+//                 LedDisplayDot (1);
+                LedDisplayWord (LightIntensityAverage);
                 Flags &= ~FLAGS_DISPLAY_UPDATE;
             }
 
