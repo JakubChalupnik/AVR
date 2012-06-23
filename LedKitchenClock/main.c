@@ -34,6 +34,7 @@
 //* Kubik       4.6.2012  Added timer support
 //* Kubik       7.6.2012  Added sound support
 //* Kubik      21.6.2012  Improved alarm a little
+//* Kubik      23.6.2012  Final version, different alarm sound, simplified PWM
 //*
 //*******************************************************************************
 
@@ -882,7 +883,7 @@ int main(void) {
             break;
 
           //
-          // Alarm start - enable sound interrupt, initialize the alarm counter 
+          // Alarm start - enable sound interrupt, initialize the alarm counter
           // and go to STATE_TIMER_ALARM
           //
 
@@ -916,6 +917,7 @@ int main(void) {
                 key = 0x00;
                 State = STATE_TIME;
                 Flags |= FLAGS_DISPLAY_UPDATE;
+                Brightness = Ciel8Value (1);
                 TIMSK &= ~(1 << TOIE0);
             }
 

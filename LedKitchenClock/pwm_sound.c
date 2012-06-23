@@ -28,6 +28,8 @@ static const byte Chord[] PROGMEM = {
 #include "chord.h"
 };
 
+#define SAMPLE_COUNT 6
+
 volatile uint16_t sample;
 volatile uint16_t sample_pause;
 int sample_count;
@@ -55,32 +57,25 @@ void pwm_init(void) {
     TCCR1B = _BV(WGM12) | _BV(CS10);
 
     /* set initial duty cycle to zero */
-    OCR1A = 0;
+    OCR1A = 0x00;
 
     /* Setup Timer0 */
 
     TCCR0 |= (1 << CS00);
     TCNT0 = 0;
 //     TIMSK |= (1 << TOIE0);
-    sample_count = 8;
-    sample_pause = SAMPLE_PAUSE;
+    sample_count = SAMPLE_COUNT;
 }
 
 SIGNAL(TIMER0_OVF_vect) {
 
     sample_count--;
     if(sample_count == 0) {
-        sample_count = 8;
+        sample_count = SAMPLE_COUNT;
         if (sample <= pcm_length) {
             OCR1A = pgm_read_byte(&Chord[sample++]);
         } else {
-            OCR1A = 0;
-            if (sample_pause > 0) {
-                sample_pause--;
-            } else {
-                sample = 0;
-                sample_pause = SAMPLE_PAUSE;
-            }
+            sample = 0;
         }
     }
 }

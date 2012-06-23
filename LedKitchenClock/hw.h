@@ -97,6 +97,4 @@
 #define KEY_1	0x01
 #define KEY_2	0x02
 
-#define SAMPLE_PAUSE 2000
-
 #endif // _HW_H
