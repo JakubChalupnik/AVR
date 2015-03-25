@@ -36,6 +36,7 @@
 #include "vt100.h"                      // include VT100 terminal support
 #include "i2csw.h"                      // include I2C SW bitbang support
 #include "bmp085.h"
+#include "DHT.h"
 
 //
 // Local constant defines
@@ -67,6 +68,7 @@ int main (void) {
     short Temperature;
     long Pressure;
     float PressureSeaLevel;
+    uint8_t TemperatureDht, Humidity;
 
     //
     // Initiaze AVR libraries used in the project: UART timer I2C
@@ -106,7 +108,12 @@ int main (void) {
         rprintfNum (10, 6, FALSE, ' ', Pressure);
         rprintf ("Pa, sea level %dhPa\n", (short) (PressureSeaLevel / 100));
 
-        _delay_ms (1000);
+        TemperatureDht = DHT_Read_Data (DHT_Temp);
+        Humidity = DHT_Read_Data (DHT_RH);
+
+        rprintf ("DHT11 temp %d, humidity %d\n", TemperatureDht, Humidity);
+
+        _delay_ms (3000);
     }
 
     return 0;

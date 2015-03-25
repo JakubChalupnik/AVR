@@ -43,7 +43,7 @@ FORMAT = ihex
 TARGET = main
 
 # List C source files here. (C dependencies are automatically generated.)
-SRC = $(AVRLIB)/uart.c $(AVRLIB)/i2csw.c $(AVRLIB)/rprintf.c $(AVRLIB)/timer.c $(AVRLIB)/buffer.c $(AVRLIB)/vt100.c bmp085.c $(TARGET).c
+SRC = $(AVRLIB)/uart.c $(AVRLIB)/i2csw.c $(AVRLIB)/rprintf.c $(AVRLIB)/timer.c $(AVRLIB)/buffer.c $(AVRLIB)/vt100.c bmp085.c dht.c $(TARGET).c
 
 
 # List Assembler source files here.
